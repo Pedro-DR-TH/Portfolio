@@ -6,12 +6,12 @@
 <title>Ligand2SMILES — Pedro Durao Rodrigues</title>
 <style>
   :root {
-    --ink: #1a1a1a;
-    --muted: #5a5a5a;
-    --rule: #d8d4cc;
-    --bg: #f5f5f5;
-    --link: #1a1a1a;
-    --link-hover: #000000;
+    --ink: #ececec;
+    --muted: #9a9a9a;
+    --rule: #2e2e2e;
+    --bg: #121212;
+    --link: #ececec;
+    --link-hover: #ffffff;
     --serif: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   }
 
@@ -39,7 +39,7 @@
   a {
     color: var(--link);
     text-decoration: none;
-    border-bottom: 1px solid rgba(0,0,0,0.3);
+    border-bottom: 1px solid rgba(255,255,255,0.3);
   }
 
   a:hover { color: var(--link-hover); border-bottom-color: var(--link-hover); }
@@ -55,6 +55,7 @@
     font-size: 28px;
     font-weight: 400;
     margin: 0 0 8px;
+    color: var(--ink);
   }
 
   .meta-line {
@@ -99,8 +100,8 @@
 
   <div class="content">
     <p>
-      Write a short summary of the project here — what problem it solves,
-      why you built it, and who it's for.
+      A Python library for resolving ligand and compound names to SMILES
+      strings, built from Wikidata and PubChem with RDKit validation.
     </p>
 
     <h2>Approach</h2>
