@@ -118,6 +118,23 @@
     border: 1px solid var(--rule);
     border-radius: 4px;
     display: block;
+    cursor: pointer;
+  }
+  .rf-canvas-wrap {
+    position: relative;
+  }
+  #rf-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: #1a1a1a;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    font-size: 13px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    display: none;
+    white-space: nowrap;
+    transform: translate(-50%, -130%);
   }
   #rf-info {
     margin-top: 10px;
@@ -136,34 +153,39 @@
   <div class="content">
     <p>
       An interactive campus routing tool built on Baylor University's real street
-      network. Pick any two campus locations and watch Yen's k-shortest-paths
-      algorithm animate the best route and its top alternatives, live.
+      network. Pick any two campus locations and watch
+      <a href="https://en.wikipedia.org/wiki/Yen%27s_algorithm" target="_blank" rel="noopener">Yen's k-shortest-paths algorithm</a>
+      animate the best route and its top alternatives
     </p>
 
     <h2>Approach</h2>
     <p>
       The street network is pulled from OpenStreetMap with OSMnx, snapped to
       semantic points of interest (buildings, dorms, landmarks), and served by
-      a small Flask + NetworkX API deployed on Render. The frontend below calls
-      that API and animates the resulting paths on an HTML canvas, node by node.
+      a small Flask + NetworkX API deployed on Render.
     </p>
 
     <h2>Try it</h2>
+    <p style="color: var(--muted); font-size: 14.5px;">
+      Hover over a white dot to see its name. Click one to set your start,
+      click another to set your destination.
+    </p>
     <div class="routefinder">
       <div class="rf-controls">
-        Start:
-        <select id="rf-source"></select>
-        Target:
-        <select id="rf-target"></select>
+        <span>Start: <strong id="rf-source-label">—</strong></span>
+        <span>Target: <strong id="rf-target-label">—</strong></span>
         Alternatives:
         <select id="rf-k">
           <option value="1">1</option>
           <option value="2">2</option>
           <option value="3" selected>3</option>
         </select>
-        <button onclick="rfFindRoute()">Find Route</button>
+        <button onclick="rfReset()">Reset</button>
       </div>
-      <canvas id="rf-canvas" width="1000" height="1000"></canvas>
+      <div class="rf-canvas-wrap">
+        <canvas id="rf-canvas" width="1000" height="1000"></canvas>
+        <div id="rf-tooltip"></div>
+      </div>
       <div id="rf-info"></div>
     </div>
 
@@ -183,6 +205,8 @@ const RF_PATH_COLORS = ['#dc143c', '#ff8c00', '#ba55d3', '#00ff00', '#00ffff'];
 
 let rfGraph = null;
 let rfBounds = null;
+let rfSource = null;
+let rfTarget = null;
 
 function rfComputeBounds(nodes) {
   let xs = Object.values(nodes).map(n => n.x);
@@ -224,28 +248,98 @@ function rfDrawBaseGraph() {
     rfCtx.fill();
   });
 
-  rfCtx.fillStyle = '#fff';
-  rfCtx.font = 'bold 13px sans-serif';
   Object.entries(rfGraph.pois).forEach(([name, nid]) => {
     const n = rfGraph.nodes[nid];
     if (!n) return;
     const [px, py] = rfProject(n.x, n.y);
+    const isSelected = (name === rfSource || name === rfTarget);
+    rfCtx.fillStyle = isSelected ? '#00ff00' : '#fff';
     rfCtx.beginPath();
-    rfCtx.arc(px, py, 4, 0, 2 * Math.PI);
+    rfCtx.arc(px, py, isSelected ? 7 : 5, 0, 2 * Math.PI);
     rfCtx.fill();
-    rfCtx.fillText(name, px + 6, py - 6);
   });
 }
 
 function rfPopulateDropdowns(pois) {
-  const names = Object.keys(pois).sort();
-  const sourceSel = document.getElementById('rf-source');
-  const targetSel = document.getElementById('rf-target');
-  names.forEach(name => {
-    sourceSel.add(new Option(name, name));
-    targetSel.add(new Option(name, name));
+  // no-op now; kept for compatibility, POIs are picked via canvas clicks
+}
+
+const RF_HIT_RADIUS = 10; // px, generous click/hover target around each dot
+
+function rfNearestPoi(mx, my) {
+  let best = null, bestDist = Infinity;
+  Object.entries(rfGraph.pois).forEach(([name, nid]) => {
+    const n = rfGraph.nodes[nid];
+    if (!n) return;
+    const [px, py] = rfProject(n.x, n.y);
+    const d = Math.hypot(px - mx, py - my);
+    if (d < bestDist) { bestDist = d; best = { name, nid, px, py }; }
   });
-  if (names.length > 1) targetSel.selectedIndex = 1;
+  return bestDist <= RF_HIT_RADIUS ? best : null;
+}
+
+function rfCanvasMousePos(evt) {
+  const rect = rfCanvas.getBoundingClientRect();
+  const scaleX = rfCanvas.width / rect.width;
+  const scaleY = rfCanvas.height / rect.height;
+  return {
+    x: (evt.clientX - rect.left) * scaleX,
+    y: (evt.clientY - rect.top) * scaleY,
+    clientX: evt.clientX - rect.left,
+    clientY: evt.clientY - rect.top,
+  };
+}
+
+const rfTooltip = document.getElementById('rf-tooltip');
+
+rfCanvas.addEventListener('mousemove', (evt) => {
+  const pos = rfCanvasMousePos(evt);
+  const hit = rfNearestPoi(pos.x, pos.y);
+  if (hit) {
+    rfTooltip.textContent = hit.name;
+    rfTooltip.style.left = pos.clientX + 'px';
+    rfTooltip.style.top = pos.clientY + 'px';
+    rfTooltip.style.display = 'block';
+  } else {
+    rfTooltip.style.display = 'none';
+  }
+});
+
+rfCanvas.addEventListener('mouseleave', () => {
+  rfTooltip.style.display = 'none';
+});
+
+rfCanvas.addEventListener('click', (evt) => {
+  const pos = rfCanvasMousePos(evt);
+  const hit = rfNearestPoi(pos.x, pos.y);
+  if (!hit) return;
+
+  if (!rfSource) {
+    rfSource = hit.name;
+  } else if (!rfTarget && hit.name !== rfSource) {
+    rfTarget = hit.name;
+  } else {
+    // both already set, or clicked the same one again -> start over with this pick
+    rfSource = hit.name;
+    rfTarget = null;
+  }
+
+  document.getElementById('rf-source-label').textContent = rfSource || '—';
+  document.getElementById('rf-target-label').textContent = rfTarget || '—';
+  rfDrawBaseGraph();
+
+  if (rfSource && rfTarget) {
+    rfFindRoute();
+  }
+});
+
+function rfReset() {
+  rfSource = null;
+  rfTarget = null;
+  document.getElementById('rf-source-label').textContent = '—';
+  document.getElementById('rf-target-label').textContent = '—';
+  document.getElementById('rf-info').textContent = '';
+  rfDrawBaseGraph();
 }
 
 async function rfLoadGraph() {
@@ -278,13 +372,12 @@ function rfAnimatePath(coords, color, speedMsPerSegment = 60) {
 }
 
 async function rfFindRoute() {
-  const source = document.getElementById('rf-source').value;
-  const target = document.getElementById('rf-target').value;
+  const source = rfSource;
+  const target = rfTarget;
   const k = document.getElementById('rf-k').value;
   const info = document.getElementById('rf-info');
 
-  if (source === target) {
-    info.textContent = 'Pick two different locations.';
+  if (!source || !target || source === target) {
     return;
   }
 
