@@ -14,9 +14,7 @@
     --link-hover: #ffffff;
     --serif: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   }
-
   * { box-sizing: border-box; }
-
   body {
     margin: 0;
     background: var(--bg);
@@ -25,55 +23,45 @@
     font-size: 17px;
     line-height: 1.6;
   }
-
   .wrap {
     max-width: 760px;
     margin: 0 auto 0 8%;
     padding: 64px 24px 100px;
   }
-
   @media (max-width: 900px) {
     .wrap { margin: 0 auto; }
   }
-
   a {
     color: var(--link);
     text-decoration: none;
     border-bottom: 1px solid rgba(255,255,255,0.3);
   }
-
   a:hover { color: var(--link-hover); border-bottom-color: var(--link-hover); }
-
   .back {
     display: inline-block;
     margin-bottom: 32px;
     font-size: 14.5px;
     color: var(--muted);
   }
-
   h1 {
     font-size: 28px;
     font-weight: 400;
     margin: 0 0 8px;
     color: var(--ink);
   }
-
   .meta-line {
     color: var(--muted);
     font-size: 15px;
     margin: 0 0 32px;
   }
-
   hr.rule {
     border: none;
     border-top: 1px solid var(--rule);
     margin: 0 0 32px;
   }
-
   .content p {
     margin: 0 0 16px;
   }
-
   .content h2 {
     font-size: 15px;
     text-transform: uppercase;
@@ -82,45 +70,248 @@
     margin: 32px 0 12px;
     font-weight: 600;
   }
-
   .links {
     margin-top: 40px;
     font-size: 15px;
+  }
+
+  /* --- Route finder widget --- */
+  .routefinder {
+    margin-top: 8px;
+  }
+  .rf-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 16px;
+    font-size: 14.5px;
+    color: var(--muted);
+  }
+  .rf-controls select {
+    background: #1a1a1a;
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 14.5px;
+    font-family: var(--serif);
+  }
+  .rf-controls button {
+    background: var(--ink);
+    color: #121212;
+    border: none;
+    border-radius: 4px;
+    padding: 7px 16px;
+    font-size: 14.5px;
+    font-family: var(--serif);
+    cursor: pointer;
+  }
+  .rf-controls button:hover {
+    background: var(--link-hover);
+  }
+  #rf-canvas {
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 1 / 1;
+    background: #000;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    display: block;
+  }
+  #rf-info {
+    margin-top: 10px;
+    font-size: 14px;
+    color: var(--muted);
+    min-height: 20px;
   }
 </style>
 </head>
 <body>
 <div class="wrap">
-
   <a class="back" href="index.html">&larr; back to projects</a>
-
-  <h1>Ligand2SMILES</h1>
+  <h1>Baylor Optimized</h1>
   <p class="meta-line">2026</p>
   <hr class="rule">
-
   <div class="content">
     <p>
-      BAylor
+      An interactive campus routing tool built on Baylor University's real street
+      network. Pick any two campus locations and watch Yen's k-shortest-paths
+      algorithm animate the best route and its top alternatives, live.
     </p>
 
     <h2>Approach</h2>
     <p>
-      Describe the method, model, or pipeline. What tools, libraries, or
-      techniques did you use? What was technically interesting or hard
-      about it?
+      The street network is pulled from OpenStreetMap with OSMnx, snapped to
+      semantic points of interest (buildings, dorms, landmarks), and served by
+      a small Flask + NetworkX API deployed on Render. The frontend below calls
+      that API and animates the resulting paths on an HTML canvas, node by node.
     </p>
 
-    <h2>Results</h2>
-    <p>
-      Summarize outcomes, metrics, or what the final tool does. Add images,
-      plots, or example outputs here if you have them.
-    </p>
+    <h2>Try it</h2>
+    <div class="routefinder">
+      <div class="rf-controls">
+        Start:
+        <select id="rf-source"></select>
+        Target:
+        <select id="rf-target"></select>
+        Alternatives:
+        <select id="rf-k">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3" selected>3</option>
+        </select>
+        <button onclick="rfFindRoute()">Find Route</button>
+      </div>
+      <canvas id="rf-canvas" width="1000" height="1000"></canvas>
+      <div id="rf-info"></div>
+    </div>
 
     <div class="links">
-      <a href="https://github.com/Pedro-DR-TH/Ligand2SMILES">View code on GitHub</a>
+      <a href="https://github.com/Pedro-DR-TH/campus-router">View code on GitHub</a>
     </div>
   </div>
-
 </div>
+
+<script>
+// ---- point this at your deployed Render API ----
+const RF_API_BASE = "https://campus-router.onrender.com";
+
+const rfCanvas = document.getElementById('rf-canvas');
+const rfCtx = rfCanvas.getContext('2d');
+const RF_PATH_COLORS = ['#dc143c', '#ff8c00', '#ba55d3', '#00ff00', '#00ffff'];
+
+let rfGraph = null;
+let rfBounds = null;
+
+function rfComputeBounds(nodes) {
+  let xs = Object.values(nodes).map(n => n.x);
+  let ys = Object.values(nodes).map(n => n.y);
+  return { minx: Math.min(...xs), maxx: Math.max(...xs),
+           miny: Math.min(...ys), maxy: Math.max(...ys) };
+}
+
+function rfProject(x, y) {
+  const pad = 40;
+  const w = rfCanvas.width - 2 * pad, h = rfCanvas.height - 2 * pad;
+  const px = pad + ((x - rfBounds.minx) / (rfBounds.maxx - rfBounds.minx)) * w;
+  const py = pad + (1 - (y - rfBounds.miny) / (rfBounds.maxy - rfBounds.miny)) * h;
+  return [px, py];
+}
+
+function rfDrawBaseGraph() {
+  rfCtx.fillStyle = '#000';
+  rfCtx.fillRect(0, 0, rfCanvas.width, rfCanvas.height);
+
+  rfCtx.strokeStyle = '#4d4d4d';
+  rfCtx.lineWidth = 0.5;
+  rfGraph.edges.forEach(e => {
+    const a = rfGraph.nodes[e.u], b = rfGraph.nodes[e.v];
+    if (!a || !b) return;
+    const [ax, ay] = rfProject(a.x, a.y);
+    const [bx, by] = rfProject(b.x, b.y);
+    rfCtx.beginPath();
+    rfCtx.moveTo(ax, ay);
+    rfCtx.lineTo(bx, by);
+    rfCtx.stroke();
+  });
+
+  rfCtx.fillStyle = '#808080';
+  Object.values(rfGraph.nodes).forEach(n => {
+    const [px, py] = rfProject(n.x, n.y);
+    rfCtx.beginPath();
+    rfCtx.arc(px, py, 1.2, 0, 2 * Math.PI);
+    rfCtx.fill();
+  });
+
+  rfCtx.fillStyle = '#fff';
+  rfCtx.font = 'bold 13px sans-serif';
+  Object.entries(rfGraph.pois).forEach(([name, nid]) => {
+    const n = rfGraph.nodes[nid];
+    if (!n) return;
+    const [px, py] = rfProject(n.x, n.y);
+    rfCtx.beginPath();
+    rfCtx.arc(px, py, 4, 0, 2 * Math.PI);
+    rfCtx.fill();
+    rfCtx.fillText(name, px + 6, py - 6);
+  });
+}
+
+function rfPopulateDropdowns(pois) {
+  const names = Object.keys(pois).sort();
+  const sourceSel = document.getElementById('rf-source');
+  const targetSel = document.getElementById('rf-target');
+  names.forEach(name => {
+    sourceSel.add(new Option(name, name));
+    targetSel.add(new Option(name, name));
+  });
+  if (names.length > 1) targetSel.selectedIndex = 1;
+}
+
+async function rfLoadGraph() {
+  const res = await fetch(`${RF_API_BASE}/api/graph`);
+  rfGraph = await res.json();
+  rfBounds = rfComputeBounds(rfGraph.nodes);
+  rfPopulateDropdowns(rfGraph.pois);
+  rfDrawBaseGraph();
+}
+
+function rfAnimatePath(coords, color, speedMsPerSegment = 60) {
+  return new Promise(resolve => {
+    let i = 0;
+    function step() {
+      if (i >= coords.length - 1) return resolve();
+      const [ax, ay] = rfProject(coords[i].x, coords[i].y);
+      const [bx, by] = rfProject(coords[i + 1].x, coords[i + 1].y);
+      rfCtx.strokeStyle = color;
+      rfCtx.lineWidth = 2;
+      rfCtx.lineCap = 'round';
+      rfCtx.beginPath();
+      rfCtx.moveTo(ax, ay);
+      rfCtx.lineTo(bx, by);
+      rfCtx.stroke();
+      i++;
+      setTimeout(step, speedMsPerSegment);
+    }
+    step();
+  });
+}
+
+async function rfFindRoute() {
+  const source = document.getElementById('rf-source').value;
+  const target = document.getElementById('rf-target').value;
+  const k = document.getElementById('rf-k').value;
+  const info = document.getElementById('rf-info');
+
+  if (source === target) {
+    info.textContent = 'Pick two different locations.';
+    return;
+  }
+
+  info.textContent = 'Finding route... (the API may take ~30s to wake up)';
+  rfDrawBaseGraph();
+
+  try {
+    const res = await fetch(`${RF_API_BASE}/api/route?source=${source}&target=${target}&k=${k}`);
+    const data = await res.json();
+
+    if (data.error) {
+      info.textContent = data.error;
+      return;
+    }
+
+    info.textContent = data.paths.map((p, i) =>
+      `Path ${i + 1}: ${p.length_m} m`).join('   |   ');
+
+    for (let i = data.paths.length - 1; i >= 0; i--) {
+      await rfAnimatePath(data.paths[i].coords, RF_PATH_COLORS[i % RF_PATH_COLORS.length]);
+    }
+  } catch (err) {
+    info.textContent = 'Could not reach the routing API. Try again in a moment.';
+  }
+}
+
+rfLoadGraph();
+</script>
 </body>
 </html>
